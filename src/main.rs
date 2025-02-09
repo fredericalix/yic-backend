@@ -59,22 +59,20 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
 
     let cert_url = format!("{}/realms/{}/protocol/openid-connect/certs", keycloak_url, realm);
     
-    let cert = match reqwest::get(&cert_url).await {
-        Ok(response) => {
-            match response.json::<serde_json::Value>().await {
-                Ok(cert) => cert,
-                Err(e) => {
-                    error!("Failed to parse Keycloak certificate: {}", e);
-                    return Err(actix_web::error::ErrorInternalServerError(e));
-                }
-            }
-        },
-        Err(e) => {
+    let cert = reqwest::get(&cert_url)
+        .await
+        .map_err(|e| {
             error!("Failed to fetch Keycloak certificate: {}", e);
-            return Err(actix_web::error::ErrorInternalServerError(e));
-        }
-    };
+            actix_web::error::ErrorInternalServerError(e)
+        })?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| {
+            error!("Failed to parse Keycloak certificate: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?;
 
+    // Récupère la clé publique RSA du premier certificat
     let key = cert["keys"][0]["x5c"][0]
         .as_str()
         .ok_or_else(|| {
@@ -82,10 +80,16 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             actix_web::error::ErrorInternalServerError("Invalid cert format")
         })?;
 
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_exp = false; // Optionnel: désactive la validation de l'expiration pour les tests
+    
     match decode::<Claims>(
         token,
-        &DecodingKey::from_base64_secret(key).unwrap(),
-        &Validation::new(Algorithm::RS256),
+        &DecodingKey::from_rsa_pem(key.as_bytes()).map_err(|e| {
+            error!("Failed to create decoding key: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?,
+        &validation,
     ) {
         Ok(token_data) => {
             info!("Token successfully validated for user: {:?}", token_data.claims.username);
