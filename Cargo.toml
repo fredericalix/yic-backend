@@ -15,3 +15,4 @@ dotenv = "0.15"
 log = "0.4.25"
 utoipa = { version = "5.3.1", features = ["actix_extras"] }
 utoipa-swagger-ui = { version = "9.0.0", features = ["actix-web"] }
+base64 = "0.22.1"

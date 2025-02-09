@@ -21,6 +21,7 @@ use std::task::{Context, Poll};
 use utoipa::OpenApi;
 use utoipa::openapi::security::{SecurityScheme, HttpBuilder, HttpAuthScheme};
 use utoipa_swagger_ui::SwaggerUi;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 struct Claims {
@@ -78,6 +79,9 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
+    // Log the certificate for debugging
+    info!("Received certificate: {}", serde_json::to_string_pretty(&cert).unwrap());
+
     // Récupère la clé publique directement du champ 'n' (modulus)
     let n = cert["keys"][0]["n"]
         .as_str()
@@ -93,16 +97,26 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             actix_web::error::ErrorInternalServerError("Invalid cert format")
         })?;
 
+    // Décode les composants de la clé
+    let n = BASE64.decode(n).map_err(|e| {
+        error!("Failed to decode 'n' component: {}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
+
+    let e = BASE64.decode(e).map_err(|e| {
+        error!("Failed to decode 'e' component: {}", e);
+        actix_web::error::ErrorInternalServerError(e)
+    })?;
+
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_exp = false; // Optionnel: désactive la validation de l'expiration pour les tests
     validation.set_audience(&["example-realm", "broker", "account"]);
     
+    let decoding_key = DecodingKey::from_rsa_raw_components(&n, &e);
+    
     match decode::<Claims>(
         token,
-        &DecodingKey::from_rsa_components(n, e).map_err(|e| {
-            error!("Failed to create decoding key: {}", e);
-            actix_web::error::ErrorInternalServerError(e)
-        })?,
+        &decoding_key,
         &validation,
     ) {
         Ok(token_data) => {
