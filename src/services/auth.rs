@@ -5,7 +5,7 @@ use std::env;
 use crate::models::auth::Claims;
 
 pub async fn validate_token(raw_token: &str) -> Result<Claims, Error> {
-    // Extrait le token JWT des données supplémentaires
+    // Extract the JWT token from the raw input - sometimes it comes with extra JSON stuff
     let token = if raw_token.starts_with("ey") {
         raw_token
     } else {
@@ -64,7 +64,7 @@ pub async fn validate_token(raw_token: &str) -> Result<Claims, Error> {
     );
 
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.validate_exp = false;
+    validation.validate_exp = false; // Temporarily disabled expiration check while testing
     validation.set_audience(&["example-realm", "broker", "account"]);
     
     let decoding_key = DecodingKey::from_rsa_pem(pem.as_bytes())

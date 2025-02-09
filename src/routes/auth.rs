@@ -49,7 +49,7 @@ pub async fn get_auth_config() -> impl Responder {
 #[get("/protected")]
 pub async fn protected_route() -> impl Responder {
     HttpResponse::Ok().json(json!({
-        "message": "Cette route est protégée!"
+        "message": "Hey, you made it to the protected route!"
     }))
 }
 
