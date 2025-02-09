@@ -21,7 +21,7 @@ use std::task::{Context, Poll};
 use utoipa::OpenApi;
 use utoipa::openapi::security::{SecurityScheme, HttpBuilder, HttpAuthScheme};
 use utoipa_swagger_ui::SwaggerUi;
-use base64::engine::general_purpose::URL_SAFE;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -127,7 +127,7 @@ async fn validate_token(raw_token: &str) -> Result<Claims, Error> {
     
     // Essaie de décoder chaque partie séparément pour voir où ça échoue
     info!("Trying to decode header: {}", parts[0]);
-    let header = URL_SAFE.decode(parts[0])
+    let header = URL_SAFE_NO_PAD.decode(parts[0])
         .map_err(|e| {
             error!("Failed to decode header: {}", e);
             actix_web::error::ErrorUnauthorized(e)
@@ -135,7 +135,7 @@ async fn validate_token(raw_token: &str) -> Result<Claims, Error> {
     info!("Header decoded successfully: {}", String::from_utf8_lossy(&header));
 
     info!("Trying to decode payload: {}", parts[1]);
-    let payload = URL_SAFE.decode(parts[1])
+    let payload = URL_SAFE_NO_PAD.decode(parts[1])
         .map_err(|e| {
             error!("Failed to decode payload: {}", e);
             actix_web::error::ErrorUnauthorized(e)
