@@ -1,8 +1,8 @@
 use actix_web::{
     middleware::Logger,
+    web,
     App,
     HttpServer,
-    web,
 };
 use env_logger::Env;
 use log::info;
