@@ -8,6 +8,14 @@ use std::task::{Context, Poll};
 use log::{info, warn};
 use crate::services::auth::validate_token;
 
+// Add a list of public paths that don't need authentication
+const PUBLIC_PATHS: [&str; 4] = [
+    "/",
+    "/swagger-ui",
+    "/api-docs",
+    "/auth/config",
+];
+
 pub struct AuthMiddleware<S> {
     service: S,
 }
@@ -30,6 +38,12 @@ where
         let path = req.path().to_string();
         let method = req.method().to_string();
         info!("Incoming request: {} {}", method, path);
+
+        // Check if the path is public
+        if PUBLIC_PATHS.iter().any(|public_path| path.starts_with(public_path)) {
+            info!("Public route accessed: {} {}", method, path);
+            return Box::pin(self.service.call(req));
+        }
 
         let auth_header = req.headers().get("Authorization").cloned();
         let fut = self.service.call(req);
