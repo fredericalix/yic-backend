@@ -21,6 +21,8 @@ use std::task::{Context, Poll};
 use utoipa::OpenApi;
 use utoipa::openapi::security::{SecurityScheme, HttpBuilder, HttpAuthScheme};
 use utoipa_swagger_ui::SwaggerUi;
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine;
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 struct Claims {
@@ -56,6 +58,15 @@ struct KeycloakConfig {
 }
 
 async fn validate_token(token: &str) -> Result<Claims, Error> {
+    info!("Received token: {}", token);
+    
+    // Sépare le token en ses parties (header.payload.signature)
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        error!("Invalid token format - expected 3 parts, got {}", parts.len());
+        return Err(actix_web::error::ErrorUnauthorized("Invalid token format"));
+    }
+
     let keycloak_url = env::var("CC_KEYCLOAK_URL")
         .expect("CC_KEYCLOAK_URL must be set");
     let realm = env::var("KEYCLOACK_REALM")
@@ -98,8 +109,6 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             .join("\n")
     );
 
-    info!("Using PEM:\n{}", pem);
-
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_exp = false; // Optionnel: désactive la validation de l'expiration pour les tests
     validation.set_audience(&["example-realm", "broker", "account"]);
@@ -109,6 +118,23 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             error!("Failed to create decoding key: {}", e);
             actix_web::error::ErrorInternalServerError(e)
         })?;
+    
+    // Essaie de décoder chaque partie séparément pour voir où ça échoue
+    info!("Trying to decode header: {}", parts[0]);
+    let header = URL_SAFE.decode(parts[0])
+        .map_err(|e| {
+            error!("Failed to decode header: {}", e);
+            actix_web::error::ErrorUnauthorized(e)
+        })?;
+    info!("Header decoded successfully: {}", String::from_utf8_lossy(&header));
+
+    info!("Trying to decode payload: {}", parts[1]);
+    let payload = URL_SAFE.decode(parts[1])
+        .map_err(|e| {
+            error!("Failed to decode payload: {}", e);
+            actix_web::error::ErrorUnauthorized(e)
+        })?;
+    info!("Payload decoded successfully: {}", String::from_utf8_lossy(&payload));
     
     match decode::<Claims>(
         token,
