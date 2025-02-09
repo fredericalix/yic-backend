@@ -21,7 +21,6 @@ use std::task::{Context, Poll};
 use utoipa::OpenApi;
 use utoipa::openapi::security::{SecurityScheme, HttpBuilder, HttpAuthScheme};
 use utoipa_swagger_ui::SwaggerUi;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 struct Claims {
@@ -82,37 +81,29 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
     // Log the certificate for debugging
     info!("Received certificate: {}", serde_json::to_string_pretty(&cert).unwrap());
 
-    // Récupère la clé publique directement du champ 'n' (modulus)
-    let n = cert["keys"][0]["n"]
+    // Récupère la clé publique du certificat x5c
+    let public_key = cert["keys"][0]["x5c"][0]
         .as_str()
         .ok_or_else(|| {
-            error!("Missing 'n' field in certificate");
-            actix_web::error::ErrorInternalServerError("Invalid cert format")
-        })?;
-    
-    let e = cert["keys"][0]["e"]
-        .as_str()
-        .ok_or_else(|| {
-            error!("Missing 'e' field in certificate");
+            error!("Missing x5c field in certificate");
             actix_web::error::ErrorInternalServerError("Invalid cert format")
         })?;
 
-    // Décode les composants de la clé
-    let n = BASE64.decode(n).map_err(|e| {
-        error!("Failed to decode 'n' component: {}", e);
-        actix_web::error::ErrorInternalServerError(e)
-    })?;
-
-    let e = BASE64.decode(e).map_err(|e| {
-        error!("Failed to decode 'e' component: {}", e);
-        actix_web::error::ErrorInternalServerError(e)
-    })?;
+    // Construit la clé PEM
+    let pem = format!(
+        "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
+        public_key
+    );
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_exp = false; // Optionnel: désactive la validation de l'expiration pour les tests
     validation.set_audience(&["example-realm", "broker", "account"]);
     
-    let decoding_key = DecodingKey::from_rsa_raw_components(&n, &e);
+    let decoding_key = DecodingKey::from_rsa_pem(pem.as_bytes())
+        .map_err(|e| {
+            error!("Failed to create decoding key: {}", e);
+            actix_web::error::ErrorInternalServerError(e)
+        })?;
     
     match decode::<Claims>(
         token,
