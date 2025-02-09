@@ -2,21 +2,18 @@ use actix_web::Error;
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 use log::{info, error, warn};
 use std::env;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use crate::models::auth::Claims;
 
 pub async fn validate_token(raw_token: &str) -> Result<Claims, Error> {
-    // Extract the JWT token from the raw input - sometimes it comes with extra JSON stuff
-    let token = if raw_token.starts_with("ey") {
-        raw_token
-    } else {
-        raw_token.split('"').find(|s| s.starts_with("ey")).ok_or_else(|| {
-            error!("Could not find JWT token in authorization header");
-            actix_web::error::ErrorUnauthorized("Invalid token format")
-        })?
-    };
+    let token = raw_token.split('"').find(|s| s.starts_with("ey")).ok_or_else(|| {
+        error!("Could not find JWT token in authorization header");
+        actix_web::error::ErrorUnauthorized("Invalid token format")
+    })?;
 
     info!("Processing JWT token: {}", token);
-    
+
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
         error!("Invalid JWT format - expected 3 parts, got {}", parts.len());
@@ -72,6 +69,23 @@ pub async fn validate_token(raw_token: &str) -> Result<Claims, Error> {
             error!("Failed to create decoding key: {}", e);
             actix_web::error::ErrorInternalServerError(e)
         })?;
+
+    // Debug decode attempts
+    info!("Trying to decode header: {}", parts[0]);
+    let header = URL_SAFE_NO_PAD.decode(parts[0])
+        .map_err(|e| {
+            error!("Failed to decode header: {}", e);
+            actix_web::error::ErrorUnauthorized(e)
+        })?;
+    info!("Header decoded successfully: {}", String::from_utf8_lossy(&header));
+
+    info!("Trying to decode payload: {}", parts[1]);
+    let payload = URL_SAFE_NO_PAD.decode(parts[1])
+        .map_err(|e| {
+            error!("Failed to decode payload: {}", e);
+            actix_web::error::ErrorUnauthorized(e)
+        })?;
+    info!("Payload decoded successfully: {}", String::from_utf8_lossy(&payload));
     
     match decode::<Claims>(token, &decoding_key, &validation) {
         Ok(token_data) => {
