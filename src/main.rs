@@ -78,9 +78,6 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
-    // Log the certificate for debugging
-    info!("Received certificate: {}", serde_json::to_string_pretty(&cert).unwrap());
-
     // Récupère la clé publique du certificat x5c
     let public_key = cert["keys"][0]["x5c"][0]
         .as_str()
@@ -89,11 +86,19 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             actix_web::error::ErrorInternalServerError("Invalid cert format")
         })?;
 
-    // Construit la clé PEM
+    // Construit la clé PEM avec le bon format
     let pem = format!(
-        "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
+        "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
         public_key
+            .chars()
+            .collect::<Vec<char>>()
+            .chunks(64)
+            .map(|c| c.iter().collect::<String>())
+            .collect::<Vec<String>>()
+            .join("\n")
     );
+
+    info!("Using PEM:\n{}", pem);
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_exp = false; // Optionnel: désactive la validation de l'expiration pour les tests
