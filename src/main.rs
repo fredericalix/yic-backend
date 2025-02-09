@@ -7,13 +7,14 @@ use actix_web::{
     Responder, 
     Error,
     dev::{ServiceRequest, Service, ServiceResponse, Transform},
-    HttpRequest
+    HttpRequest,
+    middleware::Logger
 };
 use serde_json::json;
 use std::env;
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 use serde::{Deserialize, Serialize};
-use actix_web::middleware::Logger;
+use log::{info, error, warn};
 use std::future::{ready, Ready, Future};
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -51,26 +52,47 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
     let realm = env::var("KEYCLOACK_REALM")
         .expect("KEYCLOACK_REALM must be set");
 
+    info!("Validating token with Keycloak at {}", keycloak_url);
+
     let cert_url = format!("{}/realms/{}/protocol/openid-connect/certs", keycloak_url, realm);
     
-    let cert = reqwest::get(&cert_url)
-        .await
-        .map_err(|e| actix_web::error::ErrorInternalServerError(e))?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
+    let cert = match reqwest::get(&cert_url).await {
+        Ok(response) => {
+            match response.json::<serde_json::Value>().await {
+                Ok(cert) => cert,
+                Err(e) => {
+                    error!("Failed to parse Keycloak certificate: {}", e);
+                    return Err(actix_web::error::ErrorInternalServerError(e));
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to fetch Keycloak certificate: {}", e);
+            return Err(actix_web::error::ErrorInternalServerError(e));
+        }
+    };
 
     let key = cert["keys"][0]["x5c"][0]
         .as_str()
-        .ok_or_else(|| actix_web::error::ErrorInternalServerError("Invalid cert format"))?;
+        .ok_or_else(|| {
+            error!("Invalid certificate format from Keycloak");
+            actix_web::error::ErrorInternalServerError("Invalid cert format")
+        })?;
 
-    let token_data = decode::<Claims>(
+    match decode::<Claims>(
         token,
         &DecodingKey::from_base64_secret(key).unwrap(),
         &Validation::new(Algorithm::RS256),
-    ).map_err(|e| actix_web::error::ErrorUnauthorized(e))?;
-
-    Ok(token_data.claims)
+    ) {
+        Ok(token_data) => {
+            info!("Token successfully validated for user: {:?}", token_data.claims.username);
+            Ok(token_data.claims)
+        },
+        Err(e) => {
+            warn!("Token validation failed: {}", e);
+            Err(actix_web::error::ErrorUnauthorized(e))
+        }
+    }
 }
 
 // Créons un middleware plus propre avec la structure appropriée
@@ -93,6 +115,10 @@ where
     }
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        let path = req.path().to_string();
+        let method = req.method().to_string();
+        info!("Incoming request: {} {}", method, path);
+
         let auth_header = req.headers().get("Authorization").cloned();
         let fut = self.service.call(req);
 
@@ -101,12 +127,22 @@ where
                 let auth_str = auth_header.to_str().unwrap_or("");
                 if auth_str.starts_with("Bearer ") {
                     let token = &auth_str[7..];
-                    validate_token(token).await?;
-                    fut.await
+                    match validate_token(token).await {
+                        Ok(_) => {
+                            info!("Request authenticated: {} {}", method, path);
+                            fut.await
+                        },
+                        Err(e) => {
+                            warn!("Authentication failed for {} {}: {}", method, path, e);
+                            Err(e)
+                        }
+                    }
                 } else {
+                    warn!("Invalid token format for {} {}", method, path);
                     Err(actix_web::error::ErrorUnauthorized("Invalid token format"))
                 }
             } else {
+                warn!("No authorization header for {} {}", method, path);
                 Err(actix_web::error::ErrorUnauthorized("No authorization header"))
             }
         })
@@ -195,17 +231,18 @@ async fn get_auth_config() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::init();
+    // Configure le format des logs
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     dotenv::dotenv().ok();
 
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let port = port.parse::<u16>().expect("PORT doit être un nombre valide");
 
-    println!("Serveur démarré sur le port {}", port);
+    info!("Starting server on port {}", port);
 
     HttpServer::new(|| {
         App::new()
-            .wrap(Logger::default())
+            .wrap(Logger::new("%a %r %s %b %{Referer}i %{User-Agent}i %T"))
             .service(health_check)
             .service(get_auth_config)
             .service(
