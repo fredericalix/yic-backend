@@ -18,8 +18,11 @@ use log::{info, error, warn};
 use std::future::{ready, Ready, Future};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use utoipa::OpenApi;
+use utoipa::openapi::security::{SecurityScheme, HttpBuilder, HttpAuthScheme};
+use utoipa_swagger_ui::SwaggerUi;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 struct Claims {
     sub: String,
     exp: usize,
@@ -27,7 +30,7 @@ struct Claims {
     username: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct UserInfo {
     sub: String,
     username: String,
@@ -35,7 +38,7 @@ struct UserInfo {
     roles: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct KeycloakConfig {
     url: String,
     realm: String,
@@ -169,6 +172,102 @@ where
     }
 }
 
+// Ajoutez cette struct pour la documentation OpenAPI
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        health_check,
+        get_auth_config,
+        protected_route,
+        get_user_info
+    ),
+    components(
+        schemas(UserInfo, KeycloakConfig)
+    ),
+    tags(
+        (name = "health", description = "Health check endpoints"),
+        (name = "auth", description = "Authentication related endpoints"),
+        (name = "api", description = "Protected API endpoints")
+    ),
+    modifiers(&SecurityAddon)
+)]
+struct ApiDoc;
+
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "bearer_auth",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .build(),
+            ),
+        );
+    }
+}
+
+// Modifiez vos routes pour ajouter la documentation
+#[utoipa::path(
+    get,
+    path = "/",
+    tag = "health",
+    responses(
+        (status = 200, description = "Service is healthy", body = String)
+    )
+)]
+#[get("/")]
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok().json(json!({
+        "status": "ok, service online"
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/auth/config",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Keycloak configuration", body = KeycloakConfig)
+    )
+)]
+#[get("/auth/config")]
+async fn get_auth_config() -> impl Responder {
+    let keycloak_url = env::var("CC_KEYCLOAK_URL")
+        .expect("CC_KEYCLOAK_URL must be set");
+    let realm = env::var("KEYCLOACK_REALM")
+        .expect("KEYCLOACK_REALM must be set");
+    let client_id = env::var("KEYCLOACK_CLIENTID")
+        .expect("KEYCLOACK_CLIENTID must be set");
+
+    let config = KeycloakConfig {
+        url: keycloak_url.clone(),
+        realm: realm.clone(),
+        client_id,
+        auth_endpoint: format!("{}/realms/{}/protocol/openid-connect/auth", keycloak_url, realm),
+        token_endpoint: format!("{}/realms/{}/protocol/openid-connect/token", keycloak_url, realm),
+        logout_endpoint: format!("{}/realms/{}/protocol/openid-connect/logout", keycloak_url, realm),
+        userinfo_endpoint: format!("{}/realms/{}/protocol/openid-connect/userinfo", keycloak_url, realm),
+    };
+
+    HttpResponse::Ok().json(config)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/protected",
+    tag = "api",
+    security(
+        ("bearer_auth" = [])
+    ),
+    responses(
+        (status = 200, description = "Access granted to protected resource", body = String),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 #[get("/protected")]
 async fn protected_route() -> impl Responder {
     HttpResponse::Ok().json(json!({
@@ -176,6 +275,18 @@ async fn protected_route() -> impl Responder {
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/me",
+    tag = "api",
+    security(
+        ("bearer_auth" = [])
+    ),
+    responses(
+        (status = 200, description = "User information", body = UserInfo),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 #[get("/me")]
 async fn get_user_info(req: HttpRequest) -> Result<HttpResponse, Error> {
     if let Some(auth_header) = req.headers().get("Authorization") {
@@ -200,35 +311,6 @@ async fn get_user_info(req: HttpRequest) -> Result<HttpResponse, Error> {
     }
 }
 
-#[get("/")]
-async fn health_check() -> impl Responder {
-    HttpResponse::Ok().json(json!({
-        "status": "ok, service online"
-    }))
-}
-
-#[get("/auth/config")]
-async fn get_auth_config() -> impl Responder {
-    let keycloak_url = env::var("CC_KEYCLOAK_URL")
-        .expect("CC_KEYCLOAK_URL must be set");
-    let realm = env::var("KEYCLOACK_REALM")
-        .expect("KEYCLOACK_REALM must be set");
-    let client_id = env::var("KEYCLOACK_CLIENTID")
-        .expect("KEYCLOACK_CLIENTID must be set");
-
-    let config = KeycloakConfig {
-        url: keycloak_url.clone(),
-        realm: realm.clone(),
-        client_id,
-        auth_endpoint: format!("{}/realms/{}/protocol/openid-connect/auth", keycloak_url, realm),
-        token_endpoint: format!("{}/realms/{}/protocol/openid-connect/token", keycloak_url, realm),
-        logout_endpoint: format!("{}/realms/{}/protocol/openid-connect/logout", keycloak_url, realm),
-        userinfo_endpoint: format!("{}/realms/{}/protocol/openid-connect/userinfo", keycloak_url, realm),
-    };
-
-    HttpResponse::Ok().json(config)
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Configure le format des logs
@@ -243,6 +325,10 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .wrap(Logger::new("%a %r %s %b %{Referer}i %{User-Agent}i %T"))
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .service(health_check)
             .service(get_auth_config)
             .service(
