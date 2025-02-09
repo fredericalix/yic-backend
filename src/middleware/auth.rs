@@ -9,11 +9,10 @@ use log::{info, warn};
 use crate::services::auth::validate_token;
 
 // Add a list of public paths that don't need authentication
-const PUBLIC_PATHS: [&str; 4] = [
+const PUBLIC_PATHS: [&str; 3] = [
     "/",
     "/swagger-ui",
     "/api-docs",
-    "/auth/config",
 ];
 
 pub struct AuthMiddleware<S> {

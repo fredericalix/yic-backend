@@ -2,6 +2,7 @@ use actix_web::{
     middleware::Logger,
     App,
     HttpServer,
+    web,
 };
 use env_logger::Env;
 use log::info;
@@ -73,15 +74,18 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .wrap(middleware::auth::Auth)
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
                     .url("/api-docs/openapi.json", openapi.clone()),
             )
             .service(health_check)
             .service(get_auth_config)
-            .service(protected_route)
-            .service(get_user_info)
+            .service(
+                web::scope("/api")
+                    .wrap(middleware::auth::Auth)
+                    .service(protected_route)
+                    .service(get_user_info)
+            )
     })
     .bind(("0.0.0.0", 8080))?
     .run()

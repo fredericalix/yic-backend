@@ -36,7 +36,7 @@ pub async fn get_auth_config() -> impl Responder {
 
 #[utoipa::path(
     get,
-    path = "/api/protected",
+    path = "/protected",
     tag = "api",
     security(
         ("bearer_auth" = [])
