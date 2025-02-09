@@ -28,6 +28,12 @@ struct Claims {
     exp: usize,
     #[serde(rename = "preferred_username")]
     username: Option<String>,
+    email: Option<String>,
+    name: Option<String>,
+    given_name: Option<String>,
+    family_name: Option<String>,
+    #[serde(rename = "resource_access")]
+    resource_access: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -72,20 +78,28 @@ async fn validate_token(token: &str) -> Result<Claims, Error> {
             actix_web::error::ErrorInternalServerError(e)
         })?;
 
-    // Récupère la clé publique RSA du premier certificat
-    let key = cert["keys"][0]["x5c"][0]
+    // Récupère la clé publique directement du champ 'n' (modulus)
+    let n = cert["keys"][0]["n"]
         .as_str()
         .ok_or_else(|| {
-            error!("Invalid certificate format from Keycloak");
+            error!("Missing 'n' field in certificate");
+            actix_web::error::ErrorInternalServerError("Invalid cert format")
+        })?;
+    
+    let e = cert["keys"][0]["e"]
+        .as_str()
+        .ok_or_else(|| {
+            error!("Missing 'e' field in certificate");
             actix_web::error::ErrorInternalServerError("Invalid cert format")
         })?;
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_exp = false; // Optionnel: désactive la validation de l'expiration pour les tests
+    validation.set_audience(&["example-realm", "broker", "account"]);
     
     match decode::<Claims>(
         token,
-        &DecodingKey::from_rsa_pem(key.as_bytes()).map_err(|e| {
+        &DecodingKey::from_rsa_components(n, e).map_err(|e| {
             error!("Failed to create decoding key: {}", e);
             actix_web::error::ErrorInternalServerError(e)
         })?,
