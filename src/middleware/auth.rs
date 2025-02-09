@@ -38,8 +38,13 @@ where
         let method = req.method().to_string();
         info!("Incoming request: {} {}", method, path);
 
-        // Check if the path is public
-        if PUBLIC_PATHS.iter().any(|public_path| path.starts_with(public_path)) {
+        // More strict check for public paths
+        let is_public = PUBLIC_PATHS.iter().any(|&public_path| {
+            path == public_path || // Exact path
+            (public_path != "/" && path.starts_with(public_path)) // Only subpaths for non-root
+        });
+
+        if is_public {
             info!("Public route accessed: {} {}", method, path);
             return Box::pin(self.service.call(req));
         }
