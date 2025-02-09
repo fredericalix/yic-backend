@@ -57,13 +57,19 @@ struct KeycloakConfig {
     userinfo_endpoint: String,
 }
 
-async fn validate_token(token: &str) -> Result<Claims, Error> {
-    info!("Received token: {}", token);
+async fn validate_token(raw_token: &str) -> Result<Claims, Error> {
+    // Extrait le token JWT des données supplémentaires
+    let token = raw_token.split('"').find(|s| s.starts_with("ey")).ok_or_else(|| {
+        error!("Could not find JWT token in authorization header");
+        actix_web::error::ErrorUnauthorized("Invalid token format")
+    })?;
+
+    info!("Processing JWT token: {}", token);
     
     // Sépare le token en ses parties (header.payload.signature)
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
-        error!("Invalid token format - expected 3 parts, got {}", parts.len());
+        error!("Invalid JWT format - expected 3 parts, got {}", parts.len());
         return Err(actix_web::error::ErrorUnauthorized("Invalid token format"));
     }
 
